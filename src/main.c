@@ -299,7 +299,8 @@ int main(int argc, char **argv) {
     ds_log("Use " C_BOLD "%s help" C_RESET " or " C_BOLD "--help" C_RESET
            " for usage information.",
            argv[0]);
-    return 1;
+    ret = 1;
+    goto cleanup;
   }
 
   const char *cmd = argv[optind];
@@ -338,7 +339,8 @@ int main(int argc, char **argv) {
     ds_log("Use " C_BOLD "%s help" C_RESET " or " C_BOLD "--help" C_RESET
            " for usage information.",
            argv[0]);
-    return 1;
+    ret = 1;
+    goto cleanup;
   }
 
   if (strcmp(cmd, "docs") == 0) {

@@ -119,7 +119,9 @@ int fix_networking_rootfs(struct ds_config *cfg) {
 
   /* Link /etc/resolv.conf */
   unlink("/etc/resolv.conf");
-  symlink("/run/resolvconf/resolv.conf", "/etc/resolv.conf");
+  if (symlink("/run/resolvconf/resolv.conf", "/etc/resolv.conf") < 0) {
+    ds_warn("Failed to link /etc/resolv.conf: %s", strerror(errno));
+  }
 
   /* 4. Android Network Groups */
   if (is_android()) {

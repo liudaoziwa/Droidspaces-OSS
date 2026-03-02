@@ -393,7 +393,9 @@ int setup_unified_tmpfs(void) {
 
   /* Already mounted? Just ensure ownership is correct. */
   if (statfs(termux_tmp, &fs) == 0 && fs.f_type == TMPFS_MAGIC) {
-    chown(termux_tmp, st.st_uid, st.st_gid);
+    if (chown(termux_tmp, st.st_uid, st.st_gid) < 0) {
+      ds_warn("Failed to chown %s: %s", termux_tmp, strerror(errno));
+    }
     chmod(termux_tmp, 01777);
     return 0;
   }

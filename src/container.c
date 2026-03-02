@@ -424,12 +424,16 @@ int start_rootfs(struct ds_config *cfg) {
     }
 
     /* Write child PID to sync pipe so parent knows it */
-    write(sync_pipe[1], &init_pid, sizeof(pid_t));
+    if (write(sync_pipe[1], &init_pid, sizeof(pid_t)) != sizeof(pid_t)) {
+      ds_warn("Failed to write to sync pipe: %s", strerror(errno));
+    }
     close(sync_pipe[1]);
     sync_pipe[1] = -1;
 
     /* Ensure monitor is not sitting inside any mount point */
-    chdir("/");
+    if (chdir("/") < 0) {
+      ds_warn("Failed to chdir to /: %s", strerror(errno));
+    }
 
     /* Stdio handling for monitor in background mode */
     if (!cfg->foreground) {

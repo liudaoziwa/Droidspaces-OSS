@@ -101,10 +101,12 @@ int bind_mount(const char *src, const char *tgt) {
   if (stat(tgt, &st_tgt) < 0) {
     if (S_ISDIR(st_src.st_mode)) {
       /* CRITICAL: Match source permissions — never hardcode 0755.
-       * This preserves UID/GID/mode so bind mounts behave like Docker:
        * the kernel overlays the source transparently. */
       mkdir(tgt, st_src.st_mode & 07777);
-      chown(tgt, st_src.st_uid, st_src.st_gid);
+      if (chown(tgt, st_src.st_uid, st_src.st_gid) < 0) {
+        ds_warn("Failed to chown bind mount point %s: %s", tgt,
+                strerror(errno));
+      }
     } else {
       write_file(tgt, ""); /* Create empty file as mount point */
     }
@@ -228,13 +230,20 @@ int create_devices(const char *rootfs, int hw_access) {
   /* Standard symlinks */
   char tgt[PATH_MAX];
   snprintf(tgt, sizeof(tgt), "%s/dev/fd", rootfs);
-  symlink("/proc/self/fd", tgt);
+  if (symlink("/proc/self/fd", tgt) < 0 && errno != EEXIST)
+    ds_warn("Failed to create /dev/fd symlink: %s", strerror(errno));
+
   snprintf(tgt, sizeof(tgt), "%s/dev/stdin", rootfs);
-  symlink("/proc/self/fd/0", tgt);
+  if (symlink("/proc/self/fd/0", tgt) < 0 && errno != EEXIST)
+    ds_warn("Failed to create /dev/stdin symlink: %s", strerror(errno));
+
   snprintf(tgt, sizeof(tgt), "%s/dev/stdout", rootfs);
-  symlink("/proc/self/fd/1", tgt);
+  if (symlink("/proc/self/fd/1", tgt) < 0 && errno != EEXIST)
+    ds_warn("Failed to create /dev/stdout symlink: %s", strerror(errno));
+
   snprintf(tgt, sizeof(tgt), "%s/dev/stderr", rootfs);
-  symlink("/proc/self/fd/2", tgt);
+  if (symlink("/proc/self/fd/2", tgt) < 0 && errno != EEXIST)
+    ds_warn("Failed to create /dev/stderr symlink: %s", strerror(errno));
 
   return 0;
 }

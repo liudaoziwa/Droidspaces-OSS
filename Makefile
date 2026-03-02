@@ -57,7 +57,7 @@ find-cc = $(shell \
 		echo ""; \
 	fi)
 
-.PHONY: all help clean native x86_64 aarch64 armhf x86 all-build tarball all-tarball
+.PHONY: all help clean native x86_64 aarch64 armhf x86 all-build tarball all-tarball debug-hardened
 
 all: help
 
@@ -78,6 +78,7 @@ help:
 	@echo ""
 	@echo "Other:"
 	@echo "  make clean     - Remove build artifacts"
+	@echo "  make debug-hardened - Build with ASan/UBSan/LSan to find bugs"
 
 $(OUT_DIR):
 	@mkdir -p $(OUT_DIR)
@@ -138,6 +139,16 @@ x86:
 	@CROSS_CC="$(call find-cc,i686-linux-musl)"; \
 	if [ -n "$$CROSS_CC" ]; then $(MAKE) $(BINARY_NAME) CC=$$CROSS_CC; \
 	else echo "Error: i686-linux-musl-gcc not found. Run ./install-musl.sh x86"; exit 1; fi
+
+debug-hardened: $(OUT_DIR)
+	@echo "[*] Building hardened debug binary..."
+	$(CC) $(SRCS) -o $(OUT_DIR)/$(BINARY_NAME)-hardened \
+		-I$(SRC_DIR) -g3 -O1 -pthread -lutil \
+		-fsanitize=address -fsanitize=undefined -fsanitize=leak \
+		-fstack-protector-strong -D_FORTIFY_SOURCE=2 \
+		-Wall -Wextra -Wno-unused-parameter
+	@echo "[+] Hardened binary built: $(OUT_DIR)/$(BINARY_NAME)-hardened"
+	@echo "[!] Note: Run this on a standard Linux host (not static/musl) for best results."
 
 ANDROID_ASSETS_DIR = Android/app/src/main/assets/binaries
 

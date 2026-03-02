@@ -541,5 +541,6 @@ int scan_containers(void) {
         "Scan complete: found %d container(s), cleaned %d orphaned mount(s).",
         untracked_found, orphaned_found);
 
+  free(tracked_mounts);
   return 0;
 }
