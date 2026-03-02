@@ -277,6 +277,11 @@ int internal_boot(struct ds_config *cfg) {
   if (cfg->bind_count > 0)
     ds_log("Setting up %d custom bind mount(s)...", cfg->bind_count);
   ds_log("Booting '%s' (init: /sbin/init)...", cfg->container_name);
+  if (cfg->foreground) {
+    printf(C_BOLD C_WHITE "\r\n(to exit from the foreground mode, press "
+                          "CTRL+ALT+Q)\r\n" C_RESET);
+    fflush(stdout);
+  }
   printf("\r\n");
   fflush(stdout);
 

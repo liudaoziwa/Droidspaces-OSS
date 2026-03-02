@@ -87,6 +87,22 @@ int console_monitor_loop(int master_fd, pid_t intermediate_pid,
         /* User input -> Container master */
         n = read(STDIN_FILENO, buf, sizeof(buf));
         if (n > 0) {
+          /* Check for CTRL+ALT+Q (\x1b\x11) escape sequence */
+          if (n >= 2 && buf[0] == '\x1b' && buf[1] == '\x11') {
+            static int exit_detected = 0;
+            if (exit_detected == 0) {
+              kill(container_pid, SIGPWR);
+              kill(container_pid, SIGTERM);
+              kill(container_pid, DS_SIG_STOP);
+              exit_detected = 1;
+              continue;
+            } else {
+              ds_warn("Force exit requested. Killing monitor...");
+              running = 0;
+              break;
+            }
+          }
+
           if (write_all(master_fd, buf, (size_t)n) < 0) {
             running = 0;
             break;
