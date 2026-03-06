@@ -143,6 +143,7 @@ extern char ds_log_container_name[256];
 void ds_log_internal(const char *prefix, const char *color, int is_err,
                      const char *fmt, ...);
 void ds_die_internal(const char *fmt, ...);
+int check_ns(int flag, const char *name);
 
 #define ds_log(fmt, ...) ds_log_internal("+", C_GREEN, 0, fmt, ##__VA_ARGS__)
 #define ds_warn(fmt, ...) ds_log_internal("!", C_YELLOW, 1, fmt, ##__VA_ARGS__)

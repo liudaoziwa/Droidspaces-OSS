@@ -206,6 +206,17 @@ static void enforce_nat_safety(struct ds_config *cfg, int argc, char **argv) {
     ds_log("IPv6 functionality will be disabled for this session.");
   }
 
+  if (cfg->net_mode == DS_NET_NAT || cfg->net_mode == DS_NET_NONE) {
+    if (!check_ns(CLONE_NEWNET, "net")) {
+      printf("\n" C_RED C_BOLD
+             "[ FATAL: NETWORK NAMESPACE UNSUPPORTED ]" C_RESET "\n\n");
+      ds_error("Kernel does not support CLONE_NEWNET (network namespaces).");
+      ds_log("Cannot use --net=nat or --net=none.");
+      ds_log("Tip: Use --net=host (default) for shared host networking.");
+      exit(EXIT_FAILURE);
+    }
+  }
+
   if (cfg->net_mode != DS_NET_NAT)
     return;
 

@@ -49,7 +49,7 @@ static int check_root(void) {
   return is_root;
 }
 
-static int check_ns(int flag, const char *name) {
+int check_ns(int flag, const char *name) {
   /* 1. Fast check for kernel support via /proc */
   char path[PATH_MAX];
   snprintf(path, sizeof(path), "/proc/self/ns/%s", name);
@@ -353,6 +353,9 @@ int check_requirements_detailed(void) {
                  access("/dev/net/tun", F_OK) == 0, "OPT");
   print_ds_check("OverlayFS support", "Required for --volatile mode",
                  grep_file("/proc/filesystems", "overlay"), "OPT");
+  print_ds_check("Network namespace",
+                 "Network namespace isolation for --net=nat/none",
+                 check_ns(CLONE_NEWNET, "net"), "OPT");
 
   /* FINAL SUMMARY */
   check_append("\n" C_BOLD "Summary:" C_RESET "\n");
