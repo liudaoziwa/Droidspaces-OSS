@@ -692,7 +692,8 @@ void ds_log_internal(const char *prefix, const char *color, int is_err,
   if (!is_err) {
     if (strncmp(raw_msg, "[DEBUG]", 7) == 0 ||
         strncmp(raw_msg, "[IPT]", 5) == 0 ||
-        strncmp(raw_msg, "[NET]", 5) == 0) {
+        strncmp(raw_msg, "[NET]", 5) == 0 ||
+        strncmp(raw_msg, "[DHCP]", 6) == 0) {
       return;
     }
   }

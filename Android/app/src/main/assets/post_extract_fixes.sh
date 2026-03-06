@@ -50,21 +50,7 @@ DNS=8.8.8.8 8.8.4.4
 FallbackDNS=1.1.1.1
 EOF
 
-# 2. Setup systemd-networkd to explicitly IGNORE interfaces
-# This prevents systemd-networkd from running DHCP and stripping the static IPs 
-# explicitly configured by Droidspaces via Netlink during container boot.
-log "Configuring systemd-networkd..."
-mkdir -p "$ROOTFS_PATH/etc/systemd/network"
-
-cat > "$ROOTFS_PATH/etc/systemd/network/99-unmanaged.network" << 'EOF'
-[Match]
-Name=*
-
-[Link]
-Unmanaged=yes
-EOF
-
-# Enable systemd-resolved and systemd-networkd by default
+# 2. Enable systemd-resolved and systemd-networkd by default
 log "Enabling systemd-resolved and systemd-networkd..."
 mkdir -p "$ROOTFS_PATH/etc/systemd/system/multi-user.target.wants"
 

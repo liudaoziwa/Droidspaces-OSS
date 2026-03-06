@@ -19,6 +19,7 @@
 #include <getopt.h>
 #include <grp.h>
 #include <limits.h>
+#include <pthread.h>
 #include <pty.h>
 #include <sched.h>
 #include <signal.h>
@@ -444,6 +445,21 @@ int ds_ipt_ensure_input_accept(const char *iface);
 int ds_ipt_ensure_mss_clamp(void);
 int ds_ipt_remove_iface_rules(const char *iface);
 int ds_ipt_remove_ds_rules(void);
+
+/* ---------------------------------------------------------------------------
+ * ds_dhcp.c
+ * ---------------------------------------------------------------------------*/
+
+/* Start a single-lease DHCP server on veth_host (detached monitor thread).
+ * Offers offer_ip_be to any DHCP client that broadcasts on the interface.
+ * gw_ip_be becomes the router/server-id option (typically DS_NAT_GW_IP). */
+void ds_dhcp_server_start(struct ds_config *cfg, const char *veth_host,
+                          uint32_t offer_ip_be, uint32_t gw_ip_be,
+                          const uint8_t peer_mac[6]);
+
+/* Stop the DHCP server and unblock its recv() loop. Call before veth teardown.
+ */
+void ds_dhcp_server_stop(void);
 
 /* ---------------------------------------------------------------------------
  * terminal.c

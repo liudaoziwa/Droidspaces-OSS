@@ -332,6 +332,24 @@ int setup_veth_host_side(struct ds_config *cfg, pid_t child_pid) {
     return -1;
   }
 
+  /* Read peer MAC now — after ds_nl_move_to_netns the interface is inside the
+   * container netns and invisible to host-side ioctl(SIOCGIFHWADDR). */
+  uint8_t peer_mac[6] = {0};
+  {
+    struct ifreq ifr;
+    int fd = socket(AF_INET, SOCK_DGRAM, 0);
+    if (fd >= 0) {
+      memset(&ifr, 0, sizeof(ifr));
+      strncpy(ifr.ifr_name, veth_peer, IFNAMSIZ - 1);
+      if (ioctl(fd, SIOCGIFHWADDR, &ifr) == 0)
+        memcpy(peer_mac, ifr.ifr_hwaddr.sa_data, 6);
+      else
+        ds_warn("Failed to read peer MAC for %s: %s", veth_peer,
+                strerror(errno));
+      close(fd);
+    }
+  }
+
   ds_log("[DEBUG] Moving %s into netns of PID %d using FD %d...", veth_peer,
          (int)child_pid, netns_fd);
   int r = ds_nl_move_to_netns(ctx, veth_peer, netns_fd);
@@ -351,6 +369,27 @@ int setup_veth_host_side(struct ds_config *cfg, pid_t child_pid) {
   }
 
   ds_nl_close(ctx);
+
+  /* 8. Start embedded DHCP server so the container's DHCP client acquires
+   * the same deterministic IP that veth_peer_ip() computed for routing.
+   *
+   * Binding interface depends on topology:
+   *   Bridge mode    — bind to ds-br0.  veth_host is a bridge slave; the
+   *                    kernel delivers frames from the container upward to
+   *                    the bridge interface, not the slave.  A socket bound
+   *                    to the slave never sees the DHCP DISCOVERs.
+   *   Bridgeless mode — bind to veth_host directly (point-to-point veth,
+   *                    no bridge in the path). */
+  {
+    char peer_ip_cidr[32];
+    veth_peer_ip(child_pid, peer_ip_cidr, sizeof(peer_ip_cidr));
+    uint32_t offer_ip = 0, dummy_mask = 0;
+    parse_cidr(peer_ip_cidr, &offer_ip, &dummy_mask);
+    const char *dhcp_iface = cfg->net_bridgeless ? veth_host : DS_NAT_BRIDGE;
+    ds_dhcp_server_start(cfg, dhcp_iface, offer_ip, inet_addr(DS_NAT_GW_IP),
+                         peer_mac);
+  }
+
   return 0;
 }
 
@@ -363,6 +402,7 @@ int setup_veth_host_side(struct ds_config *cfg, pid_t child_pid) {
 int setup_veth_child_side_named(struct ds_config *cfg, const char *peer_name,
                                 const char *ip_str) {
   (void)cfg;
+  (void)ip_str; /* IP is now assigned by the container's own DHCP client */
   ds_log("[DEBUG] Child: Configuring isolated networking. Local PID: %d, "
          "Peer: %s",
          (int)getpid(), peer_name ? peer_name : "(null)");
@@ -383,46 +423,11 @@ int setup_veth_child_side_named(struct ds_config *cfg, const char *peer_name,
   /* 1. Loopback */
   ds_nl_link_up(ctx, "lo");
 
-  /* 2. Configure eth0 with the IP received from the monitor */
-  if (ip_str && ip_str[0]) {
-    /* Parse "10.0.x.x/16" */
-    char ip_buf[64];
-    safe_strncpy(ip_buf, ip_str, sizeof(ip_buf));
-    char *slash = strchr(ip_buf, '/');
-    uint8_t prefix = DS_NAT_PREFIX;
-    if (slash) {
-      *slash = '\0';
-      prefix = (uint8_t)atoi(slash + 1);
-    }
-    uint32_t ip_be = inet_addr(ip_buf);
-
-    ds_log("Configuring eth0 with IP %s...", ip_str);
-    ds_nl_add_addr4(ctx, "eth0", ip_be, prefix);
-  } else {
-    /* Fallback: PID-based IP from getpid() */
-    uint32_t hash = (uint32_t)getpid();
-    hash = ((hash >> 16) ^ hash) * 0x45d9f3b;
-
-    /* Use different bit-windows so octet3 != octet4 for all common PIDs,
-     * spreading assignments across all 65534 slots instead of only 254. */
-    int octet3 = (int)(((hash >> 8) % 254) + 1); /* 1–254, skip row 0 */
-    int octet4 = (int)((hash % 254) + 1);        /* 1–254, skip .0/.255 */
-
-    char fallback_ip[64];
-    snprintf(fallback_ip, sizeof(fallback_ip), "10.0.%d.%d", octet3, octet4);
-    ds_log("Configuring eth0 with fallback IP %s/%d...", fallback_ip,
-           DS_NAT_PREFIX);
-    ds_nl_add_addr4(ctx, "eth0", inet_addr(fallback_ip), DS_NAT_PREFIX);
-  }
-
+  /* 2. Bring eth0 UP — the container's DHCP client configures IP and route */
   ds_nl_link_up(ctx, "eth0");
 
-  /* 3. Default route via bridge gateway */
-  int eth0_idx = ds_nl_get_ifindex(ctx, "eth0");
-  if (eth0_idx > 0)
-    ds_nl_add_route4(ctx, 0, 0, inet_addr(DS_NAT_GW_IP), eth0_idx);
-
   ds_nl_close(ctx);
+  ds_log("[NET] Child: eth0 UP — awaiting DHCP lease from monitor");
   return 0;
 }
 
@@ -709,6 +714,7 @@ void ds_net_cleanup(struct ds_config *cfg, pid_t container_pid) {
     /* still proceed with iptables cleanup */
   } else {
     veth_host_name(effective_pid, veth_host, sizeof(veth_host));
+    ds_dhcp_server_stop();
     ds_nl_del_link(ctx, veth_host);
   }
 
