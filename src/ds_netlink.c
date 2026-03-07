@@ -659,6 +659,61 @@ flush_collected:
 }
 
 /* ---------------------------------------------------------------------------
+ * Count how many interfaces with a given prefix currently exist.
+ * Used by ds_net_cleanup() to decide whether to remove shared rules:
+ * shared rules (MASQUERADE, FORWARD, Android policy) must only be removed
+ * when the LAST container stops, not when one of many stops.
+ * ---------------------------------------------------------------------------*/
+int ds_nl_count_ifaces_with_prefix(ds_nl_ctx_t *ctx, const char *prefix) {
+  struct {
+    struct nlmsghdr n;
+    struct ifinfomsg i;
+  } req;
+  memset(&req, 0, sizeof(req));
+  req.n.nlmsg_len = NLMSG_LENGTH(sizeof(struct ifinfomsg));
+  req.n.nlmsg_type = RTM_GETLINK;
+  req.n.nlmsg_flags = NLM_F_REQUEST | NLM_F_DUMP;
+  req.i.ifi_family = AF_UNSPEC;
+  req.n.nlmsg_seq = ++ctx->seq;
+  req.n.nlmsg_pid = (uint32_t)ctx->pid;
+
+  if (send(ctx->fd, &req, req.n.nlmsg_len, 0) < 0)
+    return 0;
+
+  int count = 0;
+  size_t prefix_len = strlen(prefix);
+  uint8_t buf[NL_BUFSIZE];
+
+  for (;;) {
+    ssize_t n = recv(ctx->fd, buf, sizeof(buf), 0);
+    if (n <= 0)
+      break;
+    struct nlmsghdr *h = (struct nlmsghdr *)buf;
+    for (; NLMSG_OK(h, (uint32_t)n); h = NLMSG_NEXT(h, n)) {
+      if (h->nlmsg_type == NLMSG_DONE)
+        goto count_done;
+      if (h->nlmsg_type != RTM_NEWLINK)
+        continue;
+      struct ifinfomsg *ifi = NLMSG_DATA(h);
+      struct rtattr *rta = IFLA_RTA(ifi);
+      int rlen = (int)IFLA_PAYLOAD(h);
+      char ifname[IFNAMSIZ] = {0};
+      for (; RTA_OK(rta, rlen); rta = RTA_NEXT(rta, rlen)) {
+        if (rta->rta_type == IFLA_IFNAME) {
+          safe_strncpy(ifname, RTA_DATA(rta), IFNAMSIZ);
+          break;
+        }
+      }
+      if (ifname[0] && strncmp(ifname, prefix, prefix_len) == 0)
+        count++;
+    }
+  }
+
+count_done:
+  return count;
+}
+
+/* ---------------------------------------------------------------------------
  * Find the default-route table used for internet connectivity
  *
  * On Android, the internet default route is in a policy table with id > 100

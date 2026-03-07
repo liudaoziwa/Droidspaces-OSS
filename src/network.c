@@ -881,7 +881,23 @@ void ds_net_cleanup(struct ds_config *cfg, pid_t container_pid) {
     ds_nl_del_link(ctx, veth_host);
   }
 
-  /* 2. Remove Android policy rules */
+  /* Check how many ds-v* veths remain AFTER deleting ours.
+   * Shared rules (MASQUERADE, FORWARD, Android policy) must only be removed
+   * when we are the last container — removing them while others are running
+   * would kill their networking immediately. */
+  int surviving = ds_nl_count_ifaces_with_prefix(ctx, "ds-v");
+  if (surviving > 0) {
+    ds_log("[NET] cleanup: %d other container(s) still running — "
+           "keeping shared iptables and routing rules",
+           surviving);
+    ds_ipt_remove_portforwards(cfg);
+    if (cfg->net_bridgeless && veth_host[0] != '\0')
+      ds_ipt_remove_iface_rules(veth_host);
+    ds_nl_close(ctx);
+    return;
+  }
+
+  /* 2. Remove Android policy rules (last container — safe to clean up) */
   if (is_android()) {
     uint32_t subnet, mask;
     parse_cidr(DS_DEFAULT_SUBNET, &subnet, &mask);

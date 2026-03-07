@@ -457,6 +457,7 @@ int ds_nl_add_rule4(ds_nl_ctx_t *ctx, uint32_t src_be, uint8_t src_len,
 int ds_nl_del_rule4(ds_nl_ctx_t *ctx, uint32_t src_be, uint8_t src_len,
                     uint32_t dst_be, uint8_t dst_len, int table, int priority);
 void ds_nl_flush_stale_veths(ds_nl_ctx_t *ctx, const char *prefix);
+int ds_nl_count_ifaces_with_prefix(ds_nl_ctx_t *ctx, const char *prefix);
 /* Kernel capability probe — call before any NAT setup */
 int ds_nl_probe_nat_capability(char *reason, size_t rsz);
 

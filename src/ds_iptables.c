@@ -1086,11 +1086,28 @@ int ds_ipt_add_portforwards(struct ds_config *cfg, const char *container_ip) {
 
     ds_log("portforward: %s %s -> %s", pf->proto, host_port_str, to_dest);
 
-    /* PREROUTING DNAT */
-    char *dnat[] = {"iptables",         "-t",          "nat", "-I",
-                    "PREROUTING",       "1",           "-p",  pf->proto,
-                    "--dport",          host_port_str, "-j",  "DNAT",
-                    "--to-destination", to_dest,       NULL};
+    /* PREROUTING DNAT — restricted to traffic destined for the host itself.
+     * Without --dst-type LOCAL, the rule also matches packets the host is
+     * merely forwarding (e.g. hotspot clients), hijacking their traffic. */
+    char *dnat[] = {"iptables",
+                    "-t",
+                    "nat",
+                    "-I",
+                    "PREROUTING",
+                    "1",
+                    "-p",
+                    pf->proto,
+                    "-m",
+                    "addrtype",
+                    "--dst-type",
+                    "LOCAL",
+                    "--dport",
+                    host_port_str,
+                    "-j",
+                    "DNAT",
+                    "--to-destination",
+                    to_dest,
+                    NULL};
     if (run_command_quiet(dnat) != 0)
       ds_warn("portforward: DNAT insert failed for port %s", host_port_str);
 
@@ -1129,11 +1146,13 @@ int ds_ipt_remove_portforwards(struct ds_config *cfg) {
     snprintf(to_dest, sizeof(to_dest), "%s:%u", container_ip,
              pf->container_port);
 
-    /* Delete PREROUTING DNAT */
-    char *del_dnat[] = {"iptables",    "-t", "nat",     "-D",
-                        "PREROUTING",  "-p", pf->proto, "--dport",
-                        host_port_str, "-j", "DNAT",    "--to-destination",
-                        to_dest,       NULL};
+    /* Delete PREROUTING DNAT — args must mirror the insert exactly */
+    char *del_dnat[] = {
+        "iptables",    "-t",         "nat",     "-D",
+        "PREROUTING",  "-p",         pf->proto, "-m",
+        "addrtype",    "--dst-type", "LOCAL",   "--dport",
+        host_port_str, "-j",         "DNAT",    "--to-destination",
+        to_dest,       NULL};
     run_command_quiet(del_dnat);
 
     /* Delete FORWARD ACCEPT */
