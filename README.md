@@ -138,6 +138,7 @@ The entire runtime is a **single static binary** under 150KB, compiled against m
 | Dependencies | Many (liblxc, runc, containerd, etc.) | Zero. Single static binary. |
 | Setup Complexity | High. Requires Termux, cross-compiled libraries, manual config files. | Low. Download and install the APK, then run it on Android; download, extract, and run it on Linux. |
 | Older kernels Support | Spotty. Many features break on older kernels. | Full. Adaptive seccomp shield handles kernel quirks. |
+| **Network Isolation** | **Broken on Android**. Even with all kernel configs enabled, network isolation with internet access never works. | **First-in-Class**. Perfectly handles network isolation with internet access on Android out of the box. |
 | Binary Size | 10MB+ (plus dependencies) | Under 150KB per architecture. |
 | Android Optimizations | None. Not designed for Android. | Yes. SELinux handling, FBE keyring management, storage integration, networking fixes |
 | Termux Required | Often. Used as the execution environment. | Never. Runs directly as a native binary. |
