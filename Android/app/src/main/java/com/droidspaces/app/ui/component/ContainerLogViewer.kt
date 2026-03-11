@@ -23,6 +23,7 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.widget.Toast
 import com.droidspaces.app.R
+import com.droidspaces.app.util.AnsiColorParser
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -188,7 +189,7 @@ fun ContainerLogViewer(
                             .clickable(
                                 enabled = currentLogs.isNotEmpty(),
                                 onClick = {
-                                    val logText = currentLogs.joinToString("\n") { it.second }
+                                    val logText = currentLogs.joinToString("\n") { AnsiColorParser.stripAnsi(it.second) }
                                     val clipboard = context.getSystemService(ClipboardManager::class.java)
                                     val clip = ClipData.newPlainText(context.getString(R.string.container_logs), logText)
                                     clipboard.setPrimaryClip(clip)
