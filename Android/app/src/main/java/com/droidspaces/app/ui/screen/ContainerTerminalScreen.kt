@@ -109,7 +109,13 @@ fun ContainerTerminalScreen(
 
     fun addTab(user: String) {
         val id = "${containerName}_${UUID.randomUUID().toString().take(8)}"
-        tabs.add(TerminalTab(id = id, user = user, label = "$user@$hostname"))
+        val newTab = TerminalTab(id = id, user = user, label = "$user@$hostname")
+        val currentIndex = tabs.indexOfFirst { it.id == activeTabId }
+        if (currentIndex != -1) {
+            tabs.add(currentIndex + 1, newTab)
+        } else {
+            tabs.add(newTab)
+        }
         activeTabId = id
     }
 
@@ -167,10 +173,11 @@ fun ContainerTerminalScreen(
                 )
 
                 if (tabs.isNotEmpty()) {
-                    TabRow(
+                    ScrollableTabRow(
                         selectedTabIndex = tabs.indexOfFirst { it.id == activeTabId }.coerceAtLeast(0),
                         containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
                         contentColor = MaterialTheme.colorScheme.primary,
+                        edgePadding = 0.dp,
                         divider = {},
                         modifier = Modifier.fillMaxWidth()
                     ) {
@@ -232,15 +239,17 @@ fun ContainerTerminalScreen(
                 }
             } else {
                 tabs.forEach { tab ->
-                    TerminalTabView(
-                        tab = tab,
-                        binder = binder!!,
-                        containerName = containerName,
-                        isVisible = tab.id == activeTabId,
-                        activity = activity,
-                        onSessionFinished = { closeTab(tab) },
-                        modifier = Modifier.fillMaxSize()
-                    )
+                    key(tab.id) {
+                        TerminalTabView(
+                            tab = tab,
+                            binder = binder!!,
+                            containerName = containerName,
+                            isVisible = tab.id == activeTabId,
+                            activity = activity,
+                            onSessionFinished = { closeTab(tab) },
+                            modifier = Modifier.fillMaxSize()
+                        )
+                    }
                 }
             }
         }
@@ -259,9 +268,7 @@ private fun TerminalTabView(
 ) {
     val density = LocalDensity.current
     val defaultFontSizePx = remember { with(density) { 10.dp.roundToPx() } }
-    val fontSizePx = remember(tab.id) {
-        TerminalSessionService.globalSessionList[tab.id]?.fontSizePx ?: defaultFontSizePx
-    }
+    val fontSizePx = TerminalSessionService.globalSessionList[tab.id]?.fontSizePx ?: defaultFontSizePx
     val onSurfaceColor = MaterialTheme.colorScheme.onSurface.toArgb()
 
     AnimatedVisibility(
@@ -316,6 +323,7 @@ private fun TerminalTabView(
                 update = { tv ->
                     if (isVisible) {
                         tv.onScreenUpdated()
+                        tv.setTextSize(fontSizePx)
                         TerminalScreenState.terminalView = WeakReference(tv)
                     }
                 },
