@@ -364,6 +364,9 @@ void free_config_unknown_lines(struct ds_config *cfg) {
 }
 
 int ds_config_save(const char *config_path, struct ds_config *cfg) {
+  /* Sort bind mounts before saving so they are persisted in a sane order. */
+  sort_bind_mounts(cfg);
+
   char temp_path[PATH_MAX];
   snprintf(temp_path, sizeof(temp_path), "%s.tmp", config_path);
 

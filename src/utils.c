@@ -1106,3 +1106,21 @@ int show_container_uptime(struct ds_config *cfg) {
     printf("%dh %dm %ds\n", h, m, s);
   return 0;
 }
+
+/* ---------------------------------------------------------------------------
+ * Bind Mount Sorting
+ * ---------------------------------------------------------------------------*/
+
+static int compare_bind_mounts(const void *a, const void *b) {
+  const struct ds_bind_mount *ma = (const struct ds_bind_mount *)a;
+  const struct ds_bind_mount *mb = (const struct ds_bind_mount *)b;
+  return strcmp(ma->dest, mb->dest);
+}
+
+void sort_bind_mounts(struct ds_config *cfg) {
+  if (!cfg || cfg->bind_count <= 1 || !cfg->binds)
+    return;
+
+  qsort(cfg->binds, cfg->bind_count, sizeof(struct ds_bind_mount),
+        compare_bind_mounts);
+}

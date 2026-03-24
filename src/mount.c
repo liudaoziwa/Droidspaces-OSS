@@ -873,8 +873,12 @@ done:
 }
 
 int setup_custom_binds(struct ds_config *cfg, const char *rootfs) {
-  if (cfg->bind_count == 0)
+  if (cfg->bind_count == 0 || !cfg->binds)
     return 0;
+
+  /* Ensure mounts are processed in alphabetical order of destination
+   * so parent directories are always mounted before children. */
+  sort_bind_mounts(cfg);
 
   for (int i = 0; i < cfg->bind_count; i++) {
     char tgt[PATH_MAX * 2];
