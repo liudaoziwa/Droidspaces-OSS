@@ -21,8 +21,12 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import com.droidspaces.app.util.Constants
 import com.droidspaces.app.util.SystemInfoManager
 import com.droidspaces.app.R
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 enum class DroidspacesStatus {
     Working,
@@ -40,6 +44,7 @@ fun DroidspacesStatusCard(
     version: String? = null,
     isChecking: Boolean = false,
     isRootAvailable: Boolean = true,
+    refreshTrigger: Int = 0,
     onClick: () -> Unit = {}
 ) {
     val context = LocalContext.current
@@ -61,9 +66,18 @@ fun DroidspacesStatusCard(
         )
     }
 
+    // Backend execution mode ("direct" or "daemon")
+    var backendMode by remember {
+        mutableStateOf<String?>(
+            if (status == DroidspacesStatus.Working) {
+                SystemInfoManager.getCachedBackendMode(context)
+            } else null
+        )
+    }
+
     // Check actual values in background and update with animation if changed
     // Use refresh method to bypass cache after backend installation/update
-    LaunchedEffect(status) {
+    LaunchedEffect(status, refreshTrigger) {
         if (status == DroidspacesStatus.Working || status == DroidspacesStatus.UpdateAvailable) {
             val actualRootVersion = SystemInfoManager.getRootProviderVersion(context)
             // Only update if it's different (triggers animation)
@@ -76,6 +90,16 @@ fun DroidspacesStatusCard(
             // Only update if it's different (triggers animation)
             if (actualDroidspacesVersion != null && actualDroidspacesVersion != droidspacesVersion) {
                 droidspacesVersion = actualDroidspacesVersion
+            }
+
+            // Query execution mode: "direct" or "daemon"
+            if (status == DroidspacesStatus.Working) {
+                withContext(Dispatchers.IO) {
+                    val actualMode = SystemInfoManager.getBackendMode(context)
+                    if (actualMode != backendMode) {
+                        backendMode = actualMode
+                    }
+                }
             }
         }
     }
@@ -204,6 +228,29 @@ fun DroidspacesStatusCard(
                             else -> MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.7f)
                         }
                     )
+                    // Execution mode badge (DIRECT / DAEMON)
+                    if (backendMode != null && status == DroidspacesStatus.Working) {
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Surface(
+                            color = when (status) {
+                                DroidspacesStatus.UpdateAvailable -> MaterialTheme.colorScheme.onErrorContainer.copy(alpha = 0.15f)
+                                else -> MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.12f)
+                            },
+                            shape = RoundedCornerShape(6.dp)
+                        ) {
+                            Text(
+                                text = backendMode!!,
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Bold,
+                                letterSpacing = 1.sp,
+                                color = when (status) {
+                                    DroidspacesStatus.UpdateAvailable -> MaterialTheme.colorScheme.onErrorContainer.copy(alpha = 0.8f)
+                                    else -> MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.7f)
+                                },
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
+                            )
+                        }
+                    }
                 } else {
                     Text(
                         text = when {

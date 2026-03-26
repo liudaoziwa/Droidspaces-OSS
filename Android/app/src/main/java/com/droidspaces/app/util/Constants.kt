@@ -14,6 +14,8 @@ object Constants {
 
     // Container paths
     const val CONTAINERS_BASE_PATH = "/data/local/Droidspaces/Containers"
+    const val DAEMON_MODE_FILE = "/data/local/Droidspaces/.daemon_mode"
+    const val DAEMON_PID_FILE = "/data/local/Droidspaces/droidspacesd.pid"
     const val CONTAINER_CONFIG_FILE = "container.config"
 
     // Preferences keys
@@ -33,6 +35,8 @@ object Constants {
     const val KEY_USE_DYNAMIC_COLOR = "use_dynamic_color"
     const val KEY_THEME_PALETTE = "theme_palette"
     const val KEY_APP_LOCALE = "app_locale"
+    const val KEY_BACKEND_MODE = "backend_mode"
+    const val KEY_DAEMON_MODE_ENABLED = "daemon_mode_enabled"
 
     // Container log cache prefix
     const val KEY_CONTAINER_LOG_PREFIX = "container_log_"

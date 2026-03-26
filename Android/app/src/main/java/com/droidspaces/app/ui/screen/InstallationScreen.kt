@@ -49,24 +49,35 @@ fun InstallationScreen(
 
             isInstalling = true
 
+            val whichBackendMode = withContext(Dispatchers.IO) {
+                com.droidspaces.app.util.SystemInfoManager.getBackendMode(context)
+            }
+            val wasDaemon = whichBackendMode == "DAEMON"
+
             val isAtomicUpdate = backendStatus is DroidspacesBackendStatus.UpdateAvailable
             
             isInstallingModule = false
 
             if (!isAtomicUpdate) {
-                // Clean Slate: Nuke everything and reinstall from scratch
-                // Performs clean installation for: Available (Reinstall), Corrupted, NotInstalled, etc.
-                currentStep = InstallationStep.CreatingDirectories("Nuking existing backend...")
+                // Clean Slate: Remove the old module, but NEVER the bin directory
+                // (the daemon's g_self_path fix means the old binary stays valid
+                //  until the daemon is restarted, and the new binary is already
+                //  atomically in place at the canonical path).
+                currentStep = InstallationStep.CreatingDirectories("Nuking existing module...")
                 Shell.cmd("rm -rf '/data/adb/modules/droidspaces' 2>&1").exec()
-                Shell.cmd("rm -rf '/data/local/Droidspaces/bin' 2>&1").exec()
             }
 
-            // Step 2: Install binaries (Clean Slate recreates, Atomic Update replaces via mv -f)
+
+            // Step 2: Install binaries (atomic mv to canonical path - safe even while daemon is running)
             val binaryResult = BinaryInstaller.install(context) { step ->
                 currentStep = step
             }
             binaryResult.fold(
                 onSuccess = {
+                    // Signal the running daemon (if any) that the binary was swapped
+                    if (wasDaemon) {
+                        BinaryInstaller.signalDaemon()
+                    }
                     // Step 3: Install module
                     isInstallingModule = true
                     val moduleResult = ModuleInstaller.install(context) { step ->
@@ -152,6 +163,7 @@ fun InstallationScreen(
                             color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
                             textAlign = TextAlign.Center
                         )
+
                     }
                     errorMessage != null -> {
                         Text(

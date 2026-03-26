@@ -1,6 +1,7 @@
 package com.droidspaces.app.ui.screen
 
 import android.content.Context
+import android.content.SharedPreferences
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.pm.PackageManager
@@ -47,6 +48,8 @@ import com.droidspaces.app.util.ContributorManager
 import com.droidspaces.app.util.Contributor
 import androidx.core.content.edit
 import java.util.Locale
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -79,9 +82,28 @@ fun SettingsScreen(
     var showLanguageDialog by remember { mutableStateOf(false) }
     var currentAppLocale by remember { mutableStateOf(LocaleHelper.getCurrentAppLocale(context)) }
 
-    // Listen for locale changes
+    // Daemon mode state
+    var isDaemonModeEnabled by remember { mutableStateOf(prefsManager.isDaemonModeEnabled) }
+
+    // Register SharedPreferences listener for daemon mode
+    DisposableEffect(prefsManager) {
+        val listener = SharedPreferences.OnSharedPreferenceChangeListener { _: SharedPreferences, key: String? ->
+            if (key == PreferencesManager.KEY_DAEMON_MODE_ENABLED) {
+                isDaemonModeEnabled = prefsManager.isDaemonModeEnabled
+            }
+        }
+        prefsManager.prefs.registerOnSharedPreferenceChangeListener(listener)
+        onDispose {
+            prefsManager.prefs.unregisterOnSharedPreferenceChangeListener(listener)
+        }
+    }
+
+    // Listen for locale changes and sync daemon mode from disk
     LaunchedEffect(Unit) {
         currentAppLocale = LocaleHelper.getCurrentAppLocale(context)
+        withContext(Dispatchers.IO) {
+            prefsManager.syncDaemonModeFromDisk()
+        }
     }
 
     Scaffold(
@@ -170,6 +192,18 @@ fun SettingsScreen(
                             Modifier
                         }
                     )
+            )
+
+            // Daemon Mode Toggle
+            SwitchItem(
+                icon = Icons.Default.SettingsBackupRestore,
+                title = context.getString(R.string.daemon_mode),
+                summary = context.getString(R.string.daemon_mode_description),
+                checked = isDaemonModeEnabled,
+                enabled = isRootAvailable,
+                onCheckedChange = { checked ->
+                    prefsManager.isDaemonModeEnabled = checked
+                }
             )
 
             // Requirements Card - clickable to navigate to requirements page

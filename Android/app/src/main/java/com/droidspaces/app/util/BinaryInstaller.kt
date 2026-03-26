@@ -79,8 +79,12 @@ object BinaryInstaller {
 
             val droidspacesBinaryName = getDroidspacesBinaryName()
             val busyboxBinaryName = getBusyboxBinaryName()
-            val droidspacesTargetPath = "$INSTALL_PATH/$DROIDSPACES_BINARY_NAME"
-            val busyboxTargetPath = "$INSTALL_PATH/$BUSYBOX_BINARY_NAME"
+
+            // Always install to the canonical path. The daemon's g_self_path fix
+            // means this is safe even while the daemon is running - the mv is
+            // atomic and the daemon automatically re-execs the new binary.
+            val droidspacesTargetPath = Constants.DROIDSPACES_BINARY_PATH
+            val busyboxTargetPath = Constants.BUSYBOX_BINARY_PATH
 
             // Step 2: Create directories
             onProgress(InstallationStep.CreatingDirectories(INSTALL_PATH))
@@ -160,6 +164,33 @@ object BinaryInstaller {
             installBinary(busyboxBinaryName, busyboxTargetPath, "busybox")
                 .getOrElse { error -> return@withContext Result.failure(error) }
 
+            // Step 5: Install boot module scripts to the bin directory as backups/reference
+            fun installScript(assetName: String): Result<Unit> {
+                onProgress(InstallationStep.CopyingBinary(assetName))
+                val assetManager = context.assets
+                val inputStream = assetManager.open("boot-module/$assetName")
+                val targetPath = "$INSTALL_PATH/$assetName"
+
+                val tempFile = File("${context.cacheDir}/$assetName")
+                FileOutputStream(tempFile).use { output ->
+                    inputStream.copyTo(output)
+                }
+                inputStream.close()
+
+                val copyResult = Shell.cmd("cp ${tempFile.absolutePath} $targetPath.tmp && mv -f $targetPath.tmp $targetPath && chmod 755 $targetPath").exec()
+                tempFile.delete()
+
+                if (!copyResult.isSuccess) {
+                    return Result.failure(Exception("Failed to install script $assetName: ${copyResult.err.joinToString()}"))
+                }
+                return Result.success(Unit)
+            }
+
+            installScript("post-fs-data.sh")
+                .getOrElse { error -> return@withContext Result.failure(error) }
+            installScript("service.sh")
+                .getOrElse { error -> return@withContext Result.failure(error) }
+
             // Step 5: Verify both installations
             onProgress(InstallationStep.Verifying("droidspaces and busybox"))
             val verifyDroidspaces = Shell.cmd("test -x $droidspacesTargetPath && echo 'verified' || echo 'verification_failed'").exec()
@@ -188,13 +219,32 @@ object BinaryInstaller {
     }
 
     /**
+     * After a live binary swap, send SIGUSR2 to the running daemon
+     * so it acknowledges the update (used for logging).
+     */
+    suspend fun signalDaemon(): Unit = withContext(Dispatchers.IO) {
+        val pidResult = Shell.cmd("cat ${Constants.DAEMON_PID_FILE} 2>/dev/null").exec()
+        if (pidResult.isSuccess && pidResult.out.isNotEmpty()) {
+            val pid = pidResult.out[0].trim()
+            if (pid.isNotEmpty()) {
+                Shell.cmd("kill -USR2 $pid 2>/dev/null").exec()
+            }
+        }
+    }
+
+    /**
      * Check if binaries are already installed
      */
     suspend fun isInstalled(): Boolean = withContext(Dispatchers.IO) {
         val droidspacesResult = Shell.cmd("test -x $INSTALL_PATH/$DROIDSPACES_BINARY_NAME && echo 'installed' || echo 'not_installed'").exec()
         val busyboxResult = Shell.cmd("test -x $INSTALL_PATH/$BUSYBOX_BINARY_NAME && echo 'installed' || echo 'not_installed'").exec()
+        val postFsDataResult = Shell.cmd("test -f $INSTALL_PATH/post-fs-data.sh && echo 'installed' || echo 'not_installed'").exec()
+        val serviceResult = Shell.cmd("test -f $INSTALL_PATH/service.sh && echo 'installed' || echo 'not_installed'").exec()
+
         droidspacesResult.isSuccess && droidspacesResult.out.any { it.contains("installed") } &&
-        busyboxResult.isSuccess && busyboxResult.out.any { it.contains("installed") }
+        busyboxResult.isSuccess && busyboxResult.out.any { it.contains("installed") } &&
+        postFsDataResult.isSuccess && postFsDataResult.out.any { it.contains("installed") } &&
+        serviceResult.isSuccess && serviceResult.out.any { it.contains("installed") }
     }
 }
 

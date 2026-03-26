@@ -30,6 +30,9 @@ object SystemInfoManager {
     @Volatile
     private var droidspacesVersionCache: String? = null
 
+    @Volatile
+    private var backendModeCache: String? = null
+
     // Expose cache for direct access (zero-overhead)
     // Public access for UI components to show cached value immediately
     val cachedSelinuxStatus: String? get() = selinuxStatusCache
@@ -90,12 +93,27 @@ object SystemInfoManager {
             val newDroidspacesVersion = droidspacesVersionDeferred.await()
             droidspacesVersionCache = newDroidspacesVersion
 
+            // Fetch backend mode securely in background
+            val newBackendMode = withContext(Dispatchers.IO) {
+                try {
+                    val cmd = Constants.getDroidspacesCommand()
+                    val result = Shell.cmd("$cmd mode 2>/dev/null").exec()
+                    if (result.isSuccess && result.out.isNotEmpty()) {
+                        result.out[0].trim().uppercase()
+                    } else null
+                } catch (e: Exception) { null }
+            }
+            backendModeCache = newBackendMode
+
             // Save to preferences if changed (async write, non-blocking)
             if (newRootVersion != cachedRootVersion && newRootVersion != "Unknown") {
                 PreferencesManager.getInstance(ctx).cachedRootProviderVersion = newRootVersion
             }
             if (newDroidspacesVersion != cachedDroidspacesVersion && newDroidspacesVersion != null) {
                 PreferencesManager.getInstance(ctx).cachedDroidspacesVersion = newDroidspacesVersion
+            }
+            if (newBackendMode != null) {
+                PreferencesManager.getInstance(ctx).cachedBackendMode = newBackendMode
             }
 
             isInitialized = true
@@ -291,12 +309,68 @@ object SystemInfoManager {
     }
 
     /**
+     * Get cached backend mode synchronously.
+     */
+    fun getCachedBackendMode(context: Context): String? {
+        return PreferencesManager.getInstance(context).cachedBackendMode
+    }
+
+    /**
+     * Get backend mode (DAEMON/DIRECT) asynchronously.
+     */
+    suspend fun getBackendMode(context: Context? = null): String? = withContext(Dispatchers.IO) {
+        // Fast path: return cached value immediately
+        val cached = backendModeCache
+        if (cached != null && isInitialized) {
+            return@withContext cached
+        }
+
+        val result = try {
+            val cmd = Constants.getDroidspacesCommand()
+            val shellResult = Shell.cmd("$cmd mode 2>/dev/null").exec()
+            if (shellResult.isSuccess && shellResult.out.isNotEmpty()) {
+                shellResult.out[0].trim().uppercase()
+            } else null
+        } catch (e: Exception) { null }
+
+        if (result != null) {
+            backendModeCache = result
+            context?.let {
+                PreferencesManager.getInstance(it).cachedBackendMode = result
+            }
+        }
+        result
+    }
+
+    /**
+     * Force refresh backend mode (bypasses cache).
+     */
+    suspend fun refreshBackendMode(context: Context? = null): String? = withContext(Dispatchers.IO) {
+        val result = try {
+            val cmd = Constants.getDroidspacesCommand()
+            val shellResult = Shell.cmd("$cmd mode 2>/dev/null").exec()
+            if (shellResult.isSuccess && shellResult.out.isNotEmpty()) {
+                shellResult.out[0].trim().uppercase()
+            } else null
+        } catch (e: Exception) { null }
+
+        if (result != null) {
+            backendModeCache = result
+            context?.let {
+                PreferencesManager.getInstance(it).cachedBackendMode = result
+            }
+        }
+        result
+    }
+
+    /**
      * Reset cache (useful for testing or if system state changes)
      */
     fun resetCache() {
         rootProviderVersionCache = null
         selinuxStatusCache = null
         droidspacesVersionCache = null
+        backendModeCache = null
         isInitialized = false
     }
 }

@@ -195,6 +195,7 @@ fun MainTabScreen(
         // Force refresh droidspaces version to get latest after backend updates
         if (appStateViewModel.isBackendAvailable) {
             SystemInfoManager.refreshDroidspacesVersion(context)
+            SystemInfoManager.refreshBackendMode(context)
 
             when (tab) {
                 TabItem.Home, TabItem.Containers -> {
@@ -287,7 +288,7 @@ fun MainTabScreen(
                         onNavigateToControlPanel = { selectedTab = TabItem.ControlPanel },
                         containerCount = containerCount,
                         runningCount = runningCount,
-                        onRefresh = { scope.launch { performRefresh(TabItem.Home) } }
+                        onRefresh = { performRefresh(TabItem.Home) }
                     )
                 }
 
@@ -298,16 +299,16 @@ fun MainTabScreen(
                         onNavigateToInstallation = onNavigateToContainerInstallation,
                         onNavigateToEditContainer = onNavigateToEditContainer,
                         containerViewModel = containerViewModel,
-                        onRefresh = { scope.launch { performRefresh(TabItem.Containers) } }
+                        onRefresh = { performRefresh(TabItem.Containers) }
                     )
                 }
-
+ 
                 TabItem.ControlPanel -> {
                     ControlPanelTabContent(
                         isBackendAvailable = isBackendAvailable,
                         isRootAvailable = appStateViewModel.isRootAvailable,
                         containerViewModel = containerViewModel,
-                        onRefresh = { scope.launch { performRefresh(TabItem.ControlPanel) } },
+                        onRefresh = { performRefresh(TabItem.ControlPanel) },
                         onNavigateToContainerDetails = onNavigateToContainerDetails
                     )
                 }
@@ -326,7 +327,7 @@ private fun HomeTabContent(
     onNavigateToControlPanel: () -> Unit,
     containerCount: Int,
     runningCount: Int,
-    onRefresh: () -> Unit
+    onRefresh: suspend () -> Unit
 ) {
     val context = LocalContext.current
     // Track refresh trigger for SystemInfoCard
@@ -350,6 +351,7 @@ private fun HomeTabContent(
                 version = null,
                 isChecking = isChecking,
                 isRootAvailable = isRootAvailable,
+                refreshTrigger = refreshTrigger,
                 onClick = {
                     if (!isRootAvailable) {
                         // Disabled for non-root users
@@ -453,7 +455,7 @@ private fun ContainersTabContent(
     onNavigateToInstallation: (android.net.Uri) -> Unit,
     onNavigateToEditContainer: (String) -> Unit,
     containerViewModel: ContainerViewModel,
-    onRefresh: () -> Unit
+    onRefresh: suspend () -> Unit
 ) {
     PullToRefreshWrapper(onRefresh = { onRefresh() }) {
         ContainersScreen(
@@ -471,7 +473,7 @@ private fun ControlPanelTabContent(
     isBackendAvailable: Boolean,
     isRootAvailable: Boolean,
     containerViewModel: ContainerViewModel,
-    onRefresh: () -> Unit,
+    onRefresh: suspend () -> Unit,
     onNavigateToContainerDetails: (String) -> Unit
 ) {
     PullToRefreshWrapper(onRefresh = { onRefresh() }) {

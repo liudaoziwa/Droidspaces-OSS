@@ -91,6 +91,16 @@ class PreferencesManager private constructor(context: Context) {
             }
         }
 
+    var cachedBackendMode: String?
+        get() = prefs.getString(KEY_BACKEND_MODE, null)
+        set(value) {
+            if (value != null) {
+                prefs.edit().putString(KEY_BACKEND_MODE, value).apply()
+            } else {
+                prefs.edit().remove(KEY_BACKEND_MODE).apply()
+            }
+        }
+
     // Theme preferences
     var followSystemTheme: Boolean
         get() = prefs.getBoolean(KEY_FOLLOW_SYSTEM_THEME, true)
@@ -121,6 +131,43 @@ class PreferencesManager private constructor(context: Context) {
         set(value) {
             prefs.edit().putString(KEY_THEME_PALETTE, value).apply()
         }
+
+    var isDaemonModeEnabled: Boolean
+        get() = prefs.getBoolean(KEY_DAEMON_MODE_ENABLED, false)
+        set(value) {
+            prefs.edit().putBoolean(KEY_DAEMON_MODE_ENABLED, value).apply()
+            syncDaemonMode(value)
+        }
+
+    /**
+     * Sync daemon mode preference to the root-protected file on disk.
+     * writes 1 if enabled, 0 if disabled.
+     */
+    private fun syncDaemonMode(enabled: Boolean) {
+        val value = if (enabled) "1" else "0"
+        val path = Constants.DAEMON_MODE_FILE
+        // Use non-blocking shell command to write the file
+        com.topjohnwu.superuser.Shell.cmd("echo '$value' > '$path'").submit()
+    }
+
+    /**
+     * Sync daemon mode preference from the root-protected file on disk.
+     * Updates SharedPreferences if the file exists and differs.
+     */
+    fun syncDaemonModeFromDisk() {
+        val path = Constants.DAEMON_MODE_FILE
+        // Use blocking shell command to read the file state accurately
+        val result = com.topjohnwu.superuser.Shell.cmd("cat '$path' 2>/dev/null").exec()
+        if (result.isSuccess && result.out.isNotEmpty()) {
+            val diskValue = result.out[0].trim()
+            val enabled = diskValue == "1"
+            if (isDaemonModeEnabled != enabled) {
+                // Update SharedPreferences ONLY (avoiding recursive syncDaemonMode call)
+                // This will trigger the OnSharedPreferenceChangeListener in the UI
+                prefs.edit().putBoolean(KEY_DAEMON_MODE_ENABLED, enabled).apply()
+            }
+        }
+    }
 
     /**
      * Store container logs in cache (only last action).
@@ -216,12 +263,14 @@ class PreferencesManager private constructor(context: Context) {
         private const val KEY_CONTAINER_COUNT = Constants.KEY_CONTAINER_COUNT
         private const val KEY_RUNNING_COUNT = Constants.KEY_RUNNING_COUNT
         private const val KEY_BACKEND_STATUS = Constants.KEY_BACKEND_STATUS
+        private const val KEY_BACKEND_MODE = Constants.KEY_BACKEND_MODE
         private const val KEY_FOLLOW_SYSTEM_THEME = Constants.KEY_FOLLOW_SYSTEM_THEME
         private const val KEY_DARK_THEME = Constants.KEY_DARK_THEME
         private const val KEY_AMOLED_MODE = Constants.KEY_AMOLED_MODE
         private const val KEY_USE_DYNAMIC_COLOR = Constants.KEY_USE_DYNAMIC_COLOR
-        private const val KEY_THEME_PALETTE = Constants.KEY_THEME_PALETTE
-        private const val KEY_CONTAINER_LOG_PREFIX = Constants.KEY_CONTAINER_LOG_PREFIX
+        const val KEY_THEME_PALETTE = Constants.KEY_THEME_PALETTE
+        const val KEY_DAEMON_MODE_ENABLED = Constants.KEY_DAEMON_MODE_ENABLED
+        const val KEY_CONTAINER_LOG_PREFIX = Constants.KEY_CONTAINER_LOG_PREFIX
         private const val KEY_CONTAINER_OS_INFO_PREFIX = Constants.KEY_CONTAINER_OS_INFO_PREFIX
 
         // Double-checked locking pattern for thread-safe singleton
