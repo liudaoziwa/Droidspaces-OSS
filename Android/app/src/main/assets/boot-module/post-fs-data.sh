@@ -23,18 +23,12 @@ log() {
     echo "[${timestamp}] [post-fs-data] $*" >> "${LOGS_FILE}"
 }
 
-# Function to remove ANSI escape sequences/colors
-strip_colors() {
-    local ESC=$(printf '\033')
-    ${BUSYBOX_BINARY} sed "s/${ESC}\[[0-9;]*[mK]//g"
-}
-
 log "Droidspaces post-fs-data script started"
 
 # Daemon mode marker file
 DAEMON_MODE_FILE=${DROIDSPACE_DIR}/.daemon_mode
 
-# Live SELinux patching (non-fatal)
+# Live SELinux patching
 if [ -f "${MAGISKPOLICY_BINARY}" ] && [ -f "${DROIDSPACES_TE_FILE}" ]; then
     log "Patching SELinux policy..."
     OUTPUT=$("${MAGISKPOLICY_BINARY}" --live --apply "${DROIDSPACES_TE_FILE}" 2>&1)
@@ -52,9 +46,9 @@ fi
 # Start the Droidspaces daemon if enabled (value 1)
 if [ -f "${DAEMON_MODE_FILE}" ] && [ "$(${BUSYBOX_BINARY} cat "${DAEMON_MODE_FILE}" 2>/dev/null)" = "1" ]; then
     log "Daemon mode enabled, starting Droidspaces daemon..."
-    if "${DROIDSPACE_BINARY}" daemon 2>&1 | strip_colors >> "${LOGS_FILE}" &
-    then
-        log "Daemon process launched in background"
+
+    if "${DROIDSPACE_BINARY}" daemon >> "${LOGS_FILE}" 2>&1; then
+        log "Daemon process launched successfully"
     else
         log "WARNING: Failed to launch daemon"
     fi
