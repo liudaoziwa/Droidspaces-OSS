@@ -97,6 +97,12 @@ else
     generate_denials "${BUGREPORT_DIR}"/*.log
 fi
 
+# Grab the live SELinux policy binary - useful for running audit2allow -C
+# directly against the actual policy the device is enforcing
+echo "Collecting SELinux policy..."
+"${BUSYBOX}" cp /sys/fs/selinux/policy "${BUGREPORT_DIR}/selinux_policy" 2>/dev/null || \
+    echo "WARNING: Could not copy SELinux policy (is SELinux mounted?)"
+
 # Pack everything into a tarball on /sdcard so it's easy to pull via MTP or adb
 echo "Packing bugreport tarball..."
 "${BUSYBOX}" tar -czf "${OUTPUT_TARBALL}" \
