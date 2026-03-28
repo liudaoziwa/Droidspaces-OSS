@@ -1,4 +1,4 @@
-#!/system/bin/sh
+#!/vendor/bin/sh
 
 # Droidspaces Container Auto-Boot script
 # Wired as a oneshot service triggered on sys.boot_completed=1
