@@ -31,29 +31,33 @@ allow droidspacesd dm_device blk_file getattr
 allow droidspacesd droidspacesd bpf prog_load
 allow droidspacesd droidspacesd capability { audit_write chown dac_override dac_read_search fowner fsetid kill net_admin net_raw setgid setpcap setuid sys_admin sys_boot sys_chroot sys_nice sys_ptrace sys_resource }
 allow droidspacesd droidspacesd capability2 bpf
-allow droidspacesd droidspacesd fifo_file { ioctl read write }
-allow droidspacesd droidspacesd file ioctl
+allow droidspacesd droidspacesd dir search
+allow droidspacesd droidspacesd fifo_file { getattr ioctl read write }
+allow droidspacesd droidspacesd file { getattr ioctl open read write }
 allow droidspacesd droidspacesd icmp_socket { create getopt read setopt write }
 allow droidspacesd droidspacesd key { search write }
+allow droidspacesd droidspacesd lnk_file read
 allow droidspacesd droidspacesd netlink_audit_socket { create getattr nlmsg_relay read write }
 allow droidspacesd droidspacesd netlink_generic_socket setopt
 allow droidspacesd droidspacesd netlink_kobject_uevent_socket { bind create getattr getopt read setopt }
 allow droidspacesd droidspacesd netlink_netfilter_socket { bind create getattr getopt setopt }
 allow droidspacesd droidspacesd netlink_route_socket { bind create getattr getopt nlmsg_read nlmsg_readpriv nlmsg_write read setopt write }
 allow droidspacesd droidspacesd packet_socket { bind create read write }
+allow droidspacesd droidspacesd process { fork getsched signal signull }
 allow droidspacesd droidspacesd rawip_socket { create getopt setopt write }
 allow droidspacesd droidspacesd shm { create unix_read unix_write }
 allow droidspacesd droidspacesd tcp_socket { accept bind connect create getattr getopt listen read setopt shutdown write }
 allow droidspacesd droidspacesd udp_socket { bind connect create getattr ioctl read setopt write }
-allow droidspacesd droidspacesd unix_dgram_socket ioctl
-allow droidspacesd droidspacesd unix_stream_socket { accept bind connectto create listen setopt }
-allow droidspacesd droidspacesd_exec file { entrypoint execute_no_trans open read }
+allow droidspacesd droidspacesd unix_dgram_socket { create getopt ioctl read sendto setopt write }
+allow droidspacesd droidspacesd unix_stream_socket { accept bind connect connectto create getopt listen read setopt write }
+allow droidspacesd droidspacesd_exec file { entrypoint execute execute_no_trans map open read }
 allow droidspacesd droidspacesd_exec lnk_file read
 allow droidspacesd fs_bpf dir search
 allow droidspacesd fs_bpf_netd_shared dir search
 allow droidspacesd fs_bpf_netd_shared file read
 allow droidspacesd fuse dir read
 allow droidspacesd fuse filesystem unmount
+allow droidspacesd fuse_device chr_file getattr
 allow droidspacesd fusectlfs filesystem remount
 allow droidspacesd hwservicemanager file read
 allow droidspacesd init file read
@@ -77,6 +81,8 @@ allow droidspacesd prng_seeder file read
 allow droidspacesd proc file { getattr ioctl open read }
 allow droidspacesd proc_cgroups file { open read }
 allow droidspacesd proc_filesystems file { getattr open read }
+allow droidspacesd proc_fslog dir search
+allow droidspacesd proc_fslog file { open read write }
 allow droidspacesd proc_kallsyms file { getattr mounton open read }
 allow droidspacesd proc_kmsg file { open read }
 allow droidspacesd proc_net file { getattr open read write }
@@ -89,6 +95,7 @@ allow droidspacesd proc_uptime file { open read }
 allow droidspacesd selinuxfs file { open read }
 allow droidspacesd servicemanager binder call
 allow droidspacesd servicemanager file read
+allow droidspacesd shell_exec file { execute execute_no_trans getattr map open read }
 allow droidspacesd statsd file read
 allow droidspacesd su fd use
 allow droidspacesd su file read
