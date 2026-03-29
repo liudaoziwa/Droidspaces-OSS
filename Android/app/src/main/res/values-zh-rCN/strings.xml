@@ -378,8 +378,8 @@
     <string name="check_requirements">检测运行要求</string>
     <string name="requirements_check_title">运行要求检测</string>
     <string name="requirements_for_droidspaces">Droidspaces运行要求</string>
-    <string name="requirements_check_completed_successfully">运行要求检测完成，全部符合</string>
-    <string name="requirements_check_completed_with_errors">运行要求检测完成，存在不满足项</string>
+    <string name="requirements_check_completed_successfully">运行要求检测完成</string>
+    <string name="requirements_check_completed_with_errors">运行要求检测出错</string>
     <string name="kernel_requirements_clipboard_label">内核配置要求</string>
     <string name="kernel_requirements_copied">内核配置要求已复制到剪贴板</string>
     <string name="logs_copied">日志已复制到剪贴板</string>
