@@ -38,6 +38,9 @@
 (allow kernel device (blk_file (create setattr getattr unlink)))
 (allow kernel droidspacesd (fd (use)))
 
+; Allow kernel to create character devices in /dev
+(allow kernel device (chr_file (create setattr)))
+
 ; Allow kernel to read and write container data files.
 ; Fixes: rootfs.img open/read failures
 (allow kernel system_data_file (file (read write open getattr)))

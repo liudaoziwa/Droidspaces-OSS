@@ -46,26 +46,45 @@
 #define REQ_FLAG_PTY (1u << 0)
 #define EXIT_PENDING (-1)
 
-/* hack to nuke escape sequences from the log file :) */
+static FILE *g_daemon_log_fp = NULL;
+
+/*
+ * Tee helper: writes a plain (no ANSI) line to g_daemon_log_fp.
+ * Used only in foreground mode; background mode relies on dup2.
+ */
+static void daemon_log_tee(const char *prefix, const char *fmt, ...)
+    __attribute__((format(printf, 2, 3)));
+static void daemon_log_tee(const char *prefix, const char *fmt, ...) {
+  if (!g_daemon_log_fp)
+    return;
+  char msg[4096];
+  va_list ap;
+  va_start(ap, fmt);
+  vsnprintf(msg, sizeof(msg), fmt, ap);
+  va_end(ap);
+  fprintf(g_daemon_log_fp, "[%s] %s\n", prefix, msg);
+  fflush(g_daemon_log_fp);
+}
+
 #undef ds_log
 #define ds_log(fmt, ...)                                                       \
   do {                                                                         \
-    printf("[+] " fmt "\n", ##__VA_ARGS__);                                    \
-    fflush(stdout);                                                            \
+    ds_log_internal("+", C_GREEN, 0, fmt, ##__VA_ARGS__);                      \
+    daemon_log_tee("+", fmt, ##__VA_ARGS__);                                   \
   } while (0)
 
 #undef ds_warn
 #define ds_warn(fmt, ...)                                                      \
   do {                                                                         \
-    fprintf(stderr, "[!] " fmt "\n", ##__VA_ARGS__);                           \
-    fflush(stderr);                                                            \
+    ds_log_internal("!", C_YELLOW, 1, fmt, ##__VA_ARGS__);                     \
+    daemon_log_tee("!", fmt, ##__VA_ARGS__);                                   \
   } while (0)
 
 #undef ds_error
 #define ds_error(fmt, ...)                                                     \
   do {                                                                         \
-    fprintf(stderr, "[-] " fmt "\n", ##__VA_ARGS__);                           \
-    fflush(stderr);                                                            \
+    ds_log_internal("-", C_RED, 1, fmt, ##__VA_ARGS__);                        \
+    daemon_log_tee("-", fmt, ##__VA_ARGS__);                                   \
   } while (0)
 
 static volatile sig_atomic_t g_client_sigwinch = 0;
@@ -633,17 +652,28 @@ static void daemonize(int foreground) {
       if (dn > STDERR_FILENO)
         close(dn);
     }
+  }
 
+  {
     char log_path[PATH_MAX];
     snprintf(log_path, sizeof(log_path), "%s/droidspacesd.log", get_logs_dir());
     rotate_log(log_path, 2 * 1024 * 1024);
 
-    int lfd = open(log_path, O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0644);
-    if (lfd >= 0) {
-      dup2(lfd, STDOUT_FILENO);
-      dup2(lfd, STDERR_FILENO);
-      if (lfd > STDERR_FILENO)
-        close(lfd);
+    if (!foreground) {
+      /* Background: dup2 stdout/stderr to log file; g_daemon_log_fp stays
+       * NULL so the tee macros don't double-write. */
+      int lfd = open(log_path, O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0644);
+      if (lfd >= 0) {
+        dup2(lfd, STDOUT_FILENO);
+        dup2(lfd, STDERR_FILENO);
+        if (lfd > STDERR_FILENO)
+          close(lfd);
+      }
+    } else {
+      /* Foreground: keep terminal live; open log file for explicit tee.
+       * The daemon_log_tee() helper writes every message here alongside
+       * the terminal output produced by ds_log_internal(). */
+      g_daemon_log_fp = fopen(log_path, "ae");
     }
   }
 

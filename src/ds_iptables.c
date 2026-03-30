@@ -209,114 +209,141 @@ static void fixup_jump_targets(unsigned char *blob, unsigned int blob_sz,
  * Internal: insert_rule_at_hook
  *
  * Inserts new_rule at the very beginning of the given hook's chain.
- *
- * ── CRITICAL BUG FIX ────────────────────────────────────────────────────────
- * The hook_entry/underflow offset adjustment was previously:
- *
- *     if (info->hook_entry[h] >= insert_off)   ← BUG
- *         repl->hook_entry[h] += new_rule_size;
- *
- * Because insert_off == info->hook_entry[hook_id], the hook we are inserting
- * INTO was always bumped past the newly inserted rule - making it unreachable
- * to the kernel's packet-processing path.  This caused ZERO packet matches
- * on every FORWARD/POSTROUTING rule we ever inserted.
- *
- * The correct semantics are:
- *   hook_entry: bump only if STRICTLY GREATER than insert_off (>) because
- *               the chain we insert into should still start at insert_off
- *               (where our new rule now lives).
- *   underflow:  bump if >= insert_off (the terminal/policy entry at the end
- *               of any chain at-or-after the insertion point always shifts).
- * ────────────────────────────────────────────────────────────────────────────
  * ---------------------------------------------------------------------------*/
 
 static int insert_rule_at_hook(int fd, const char *table_name,
-                               struct ipt_getinfo *info,
-                               unsigned char *old_blob, unsigned int hook_id,
+                               struct ipt_getinfo *info_in,
+                               unsigned char *blob_in, unsigned int hook_id,
                                const void *new_rule, unsigned int new_rule_sz) {
-  unsigned int insert_off = info->hook_entry[hook_id];
-  unsigned int new_sz = info->size + new_rule_sz;
+  /*
+   * cur_info / cur_blob track the table state we are working from.
+   * They start as the caller-supplied values.  On EAGAIN we refetch the table
+   * and update these so the next attempt uses a fresh snapshot.
+   *
+   * cur_base: the allocation returned by get_table() on a refetch.
+   *           NULL means we are still using the caller-owned blob_in.
+   *           Non-NULL means we own it and must free it on exit.
+   */
+  struct ipt_getinfo cur_info = *info_in;
+  unsigned char *cur_base = NULL; /* NULL → caller owns initial blob */
+  unsigned char *cur_blob = blob_in;
 
-  ds_log("[IPT] insert_rule_at_hook: table='%s' hook=%u insert_off=%u "
-         "old_sz=%u new_sz=%u",
-         table_name, hook_id, insert_off, info->size, new_sz);
+  int max_retries = 5; /* generous: handles bursts of netd activity */
+  int ret = -1, err = EAGAIN;
 
-  size_t replace_sz = sizeof(struct ipt_replace) + new_sz;
-  struct ipt_replace *repl = calloc(1, replace_sz);
-  if (!repl)
-    return -ENOMEM;
+  ds_log("[IPT] insert_rule_at_hook: table='%s' hook=%u rule_sz=%u", table_name,
+         hook_id, new_rule_sz);
 
-  safe_strncpy(repl->name, table_name, sizeof(repl->name));
-  repl->valid_hooks = info->valid_hooks;
-  repl->num_entries = info->num_entries + 1;
-  repl->size = new_sz;
+  while (max_retries-- > 0) {
+    unsigned int insert_off = cur_info.hook_entry[hook_id];
+    unsigned int old_sz = cur_info.size;
+    unsigned int new_sz = old_sz + new_rule_sz;
 
-  /* ── Offset fix (see comment above) ── */
-  for (int h = 0; h < NF_INET_NUMHOOKS; h++) {
-    if (!(info->valid_hooks & (1u << h)))
-      continue;
+    ds_log("[IPT] insert_rule_at_hook: table='%s' hook=%u insert_off=%u "
+           "old_sz=%u new_sz=%u",
+           table_name, hook_id, insert_off, old_sz, new_sz);
 
-    repl->hook_entry[h] = info->hook_entry[h];
-    repl->underflow[h] = info->underflow[h];
+    size_t replace_sz = sizeof(struct ipt_replace) + new_sz;
+    struct ipt_replace *repl = calloc(1, replace_sz);
+    if (!repl) {
+      err = ENOMEM;
+      break;
+    }
 
-    /* hook_entry: strictly greater - the chain we insert INTO keeps its start
-     */
-    if (info->hook_entry[h] > insert_off)
-      repl->hook_entry[h] += new_rule_sz;
+    safe_strncpy(repl->name, table_name, sizeof(repl->name));
+    repl->valid_hooks = cur_info.valid_hooks;
+    repl->num_entries = cur_info.num_entries + 1;
+    repl->size = new_sz;
 
-    /* underflow: at-or-after - terminal entries always shift */
-    if (info->underflow[h] >= insert_off)
-      repl->underflow[h] += new_rule_sz;
+    /* num_counters = OLD count */
+    repl->num_counters = cur_info.num_entries;
 
-    ds_log("[IPT]   hook[%d]: entry %u→%u  underflow %u→%u", h,
-           info->hook_entry[h], repl->hook_entry[h], info->underflow[h],
-           repl->underflow[h]);
-  }
+    /* Counters buffer: kernel writes OLD entry counters back into this array.
+     * Must hold cur_info.num_entries (the live count) values, not
+     * num_entries+1. */
+    repl->counters = calloc(cur_info.num_entries ? cur_info.num_entries : 1,
+                            sizeof(struct xt_counters));
+    if (!repl->counters) {
+      free(repl);
+      err = ENOMEM;
+      break;
+    }
 
-  repl->num_counters = repl->num_entries;
-  repl->counters = calloc(repl->num_entries, sizeof(struct xt_counters));
-  if (!repl->counters && repl->num_entries > 0) {
-    free(repl);
-    return -ENOMEM;
-  }
-  repl->size = new_sz;
+    /* hook_entry/underflow offset adjustment */
+    for (int h = 0; h < NF_INET_NUMHOOKS; h++) {
+      if (!(cur_info.valid_hooks & (1u << h)))
+        continue;
 
-  /* Build new blob: prefix | new_rule | suffix */
-  unsigned char *nb = (unsigned char *)(repl + 1);
-  if (insert_off > 0)
-    memcpy(nb, old_blob, insert_off);
-  memcpy(nb + insert_off, new_rule, new_rule_sz);
-  if (info->size > insert_off)
-    memcpy(nb + insert_off + new_rule_sz, old_blob + insert_off,
-           info->size - insert_off);
+      repl->hook_entry[h] = cur_info.hook_entry[h];
+      repl->underflow[h] = cur_info.underflow[h];
 
-  /* BUG-1 FIX: patch stale jump verdicts in the shifted suffix */
-  fixup_jump_targets(nb, new_sz, insert_off, new_rule_sz);
+      /* hook_entry: strictly greater - the chain we insert INTO keeps its start
+       */
+      if (cur_info.hook_entry[h] > insert_off)
+        repl->hook_entry[h] += new_rule_sz;
 
-  int attempts = 3;
-  int ret = 0;
-  int err = 0;
+      /* underflow: at-or-after - terminal entries always shift */
+      if (cur_info.underflow[h] >= insert_off)
+        repl->underflow[h] += new_rule_sz;
 
-  while (attempts-- > 0) {
+      ds_log("[IPT]   hook[%d]: entry %u→%u  underflow %u→%u", h,
+             cur_info.hook_entry[h], repl->hook_entry[h], cur_info.underflow[h],
+             repl->underflow[h]);
+    }
+
+    /* Build new blob: prefix | new_rule | suffix */
+    unsigned char *nb = (unsigned char *)(repl + 1);
+    if (insert_off > 0)
+      memcpy(nb, cur_blob, insert_off);
+    memcpy(nb + insert_off, new_rule, new_rule_sz);
+    if (old_sz > insert_off)
+      memcpy(nb + insert_off + new_rule_sz, cur_blob + insert_off,
+             old_sz - insert_off);
+
+    /* Patch stale jump verdicts in the shifted suffix */
+    fixup_jump_targets(nb, new_sz, insert_off, new_rule_sz);
+
     ret = setsockopt(fd, IPPROTO_IP, IPT_SO_SET_REPLACE, repl,
                      (socklen_t)replace_sz);
     err = errno;
 
+    free(repl->counters);
+    free(repl);
+
     if (ret == 0)
       break;
 
-    if (err == EAGAIN && attempts > 0) {
-      usleep(20000 * (3 - attempts));
-      /* We loop here; technically caller could re-fetch info/old_blob,
-         but a simple sleep is often enough to pass the table lock */
+    if (err == EAGAIN && max_retries > 0) {
+      ds_log("[IPT]   EAGAIN (attempt remaining=%d) — refetching '%s' table",
+             max_retries, table_name);
+      usleep(5000 + 10000 * (4 - max_retries)); /* 5 / 15 / 25 / 35 ms */
+
+      /* Free any previously refetched base and get a fresh snapshot. */
+      if (cur_base) {
+        free(cur_base);
+        cur_base = NULL;
+      }
+
+      struct ipt_getinfo new_info;
+      unsigned char *new_base = NULL;
+      if (get_table(fd, table_name, &new_info, &new_base) < 0) {
+        ds_log("[IPT]   refetch of '%s' failed — giving up", table_name);
+        ret = -1;
+        err = EAGAIN;
+        break;
+      }
+
+      cur_base = new_base;
+      cur_blob = ENTRIES_BLOB(new_base);
+      cur_info = new_info;
       continue;
     }
 
-    break;
+    break; /* non-EAGAIN error, or last attempt exhausted */
   }
 
-  free(repl->counters);
-  free(repl);
+  if (cur_base)
+    free(cur_base);
 
   if (ret < 0) {
     if (err != ENOENT && err != EAGAIN)
@@ -337,187 +364,227 @@ static int insert_rule_at_hook(int fd, const char *table_name,
  * ---------------------------------------------------------------------------*/
 
 static int remove_matching_rules(int fd, const char *table_name,
-                                 struct ipt_getinfo *info,
-                                 unsigned char *old_blob, uint32_t match_src,
+                                 struct ipt_getinfo *info_in,
+                                 unsigned char *blob_in, uint32_t match_src,
                                  uint32_t match_mask, const char *match_iface) {
-  unsigned char *new_blob = malloc(info->size);
-  if (!new_blob)
-    return -ENOMEM;
+  /*
+   * cur_info / cur_blob track the table state we are working from.
+   * They start as the caller-supplied values.  On EAGAIN we refetch the table
+   * and update these so the next attempt uses a fresh snapshot of the rules.
+   *
+   * cur_base: the allocation returned by get_table() on a refetch.
+   *           NULL means we are still using the caller-owned blob_in.
+   *           Non-NULL means we own it and must free it on exit.
+   */
+  struct ipt_getinfo cur_info = *info_in;
+  unsigned char *cur_base = NULL; /* NULL → caller owns initial blob */
+  unsigned char *cur_blob = blob_in;
 
-  /* Allocate per-entry tracking arrays */
-  unsigned int *old_offsets =
-      calloc(info->num_entries + 1, sizeof(unsigned int));
-  unsigned int *removed_before =
-      calloc(info->num_entries + 1, sizeof(unsigned int));
-  if (!old_offsets || !removed_before) {
-    free(new_blob);
-    free(old_offsets);
-    free(removed_before);
-    return -ENOMEM;
-  }
+  int max_retries = 5;
+  int ret = 0, err = 0;
 
-  unsigned int new_sz = 0;
-  unsigned int removed_count = 0;
-  unsigned int cumulative_gone = 0;
-  unsigned int offset = 0;
-  unsigned int ei = 0;
+  while (max_retries-- > 0) {
+    unsigned char *new_blob = malloc(cur_info.size);
+    if (!new_blob)
+      return -ENOMEM;
 
-  /* Pass 1: walk, classify, build new_blob */
-  while (offset < info->size && ei < info->num_entries) {
-    const struct ipt_entry *e = (const struct ipt_entry *)(old_blob + offset);
-    if (e->next_offset == 0)
+    /* Allocate per-entry tracking arrays */
+    unsigned int *old_offsets =
+        calloc(cur_info.num_entries + 1, sizeof(unsigned int));
+    unsigned int *removed_before =
+        calloc(cur_info.num_entries + 1, sizeof(unsigned int));
+
+    if (!old_offsets || !removed_before) {
+      free(new_blob);
+      free(old_offsets);
+      free(removed_before);
+      err = ENOMEM;
       break;
+    }
 
+    unsigned int new_sz = 0;
+    unsigned int removed_count = 0;
+    unsigned int cumulative_gone = 0;
+    unsigned int offset = 0;
+    unsigned int ei = 0;
+
+    /* Pass 1: walk, classify, build new_blob */
+    while (offset < cur_info.size && ei < cur_info.num_entries) {
+      const struct ipt_entry *e = (const struct ipt_entry *)(cur_blob + offset);
+      if (e->next_offset == 0)
+        break;
+
+      old_offsets[ei] = offset;
+      removed_before[ei] = cumulative_gone;
+
+      const struct xt_entry_target *t =
+          (const struct xt_entry_target *)((const uint8_t *)e +
+                                           e->target_offset);
+      const char *tname = t->u.user.name;
+
+      int is_ours = 0;
+
+      /* MASQUERADE for our subnet */
+      if (match_src && strcmp(tname, "MASQUERADE") == 0 &&
+          e->ip.src.s_addr == match_src && e->ip.smsk.s_addr == match_mask)
+        is_ours = 1;
+
+      /* ACCEPT on our bridge interface */
+      if (!is_ours && match_iface && match_iface[0] &&
+          strcmp(tname, "ACCEPT") == 0) {
+        if (strncmp(e->ip.iniface, match_iface, IFNAMSIZ) == 0 ||
+            strncmp(e->ip.outiface, match_iface, IFNAMSIZ) == 0)
+          is_ours = 1;
+      }
+      /* ACCEPT on our bridge interface - raw-path variant (empty name, standard
+       * target) */
+      if (!is_ours && match_iface && match_iface[0] && tname[0] == '\0') {
+        if (strncmp(e->ip.iniface, match_iface, IFNAMSIZ) == 0 ||
+            strncmp(e->ip.outiface, match_iface, IFNAMSIZ) == 0)
+          is_ours = 1;
+      }
+
+      if (is_ours) {
+        /* Safety: never remove an underflow (chain policy) entry. */
+        int is_underflow = 0;
+        for (int h = 0; h < NF_INET_NUMHOOKS; h++) {
+          if ((cur_info.valid_hooks & (1u << h)) &&
+              offset == cur_info.underflow[h]) {
+            is_underflow = 1;
+            break;
+          }
+        }
+        if (is_underflow) {
+          ds_warn("[IPT] remove: would remove underflow entry at offset %u - "
+                  "skipping",
+                  offset);
+          memcpy(new_blob + new_sz, e, e->next_offset);
+          new_sz += e->next_offset;
+          offset += e->next_offset;
+          ei++;
+          continue;
+        }
+        ds_log("[IPT] remove: dropping '%s' rule at offset %u", tname, offset);
+        cumulative_gone += e->next_offset;
+        removed_count++;
+      } else {
+        memcpy(new_blob + new_sz, e, e->next_offset);
+        new_sz += e->next_offset;
+      }
+
+      offset += e->next_offset;
+      ei++;
+    }
     old_offsets[ei] = offset;
     removed_before[ei] = cumulative_gone;
 
-    const struct xt_entry_target *t =
-        (const struct xt_entry_target *)((const uint8_t *)e + e->target_offset);
-    const char *tname = t->u.user.name;
-
-    int is_ours = 0;
-
-    /* MASQUERADE for our subnet */
-    if (match_src && strcmp(tname, "MASQUERADE") == 0 &&
-        e->ip.src.s_addr == match_src && e->ip.smsk.s_addr == match_mask)
-      is_ours = 1;
-
-    /* ACCEPT on our bridge interface */
-    if (!is_ours && match_iface && match_iface[0] &&
-        strcmp(tname, "ACCEPT") == 0) {
-      if (strncmp(e->ip.iniface, match_iface, IFNAMSIZ) == 0 ||
-          strncmp(e->ip.outiface, match_iface, IFNAMSIZ) == 0)
-        is_ours = 1;
-    }
-    /* ACCEPT on our bridge interface - raw-path variant (empty name, standard
-     * target) */
-    if (!is_ours && match_iface && match_iface[0] && tname[0] == '\0') {
-      if (strncmp(e->ip.iniface, match_iface, IFNAMSIZ) == 0 ||
-          strncmp(e->ip.outiface, match_iface, IFNAMSIZ) == 0)
-        is_ours = 1;
+    if (removed_count == 0) {
+      free(new_blob);
+      free(old_offsets);
+      free(removed_before);
+      ret = 0; /* nothing to do */
+      break;
     }
 
-    if (is_ours) {
-      /* Safety: never remove an underflow (chain policy) entry.
-       * This check belongs here in Pass 1, not Pass 2 - we only care
-       * whether the entry we are ABOUT TO REMOVE happens to be an underflow.
-       * Checking old_offsets[] in Pass 2 matches every entry unconditionally
-       * and always fires, which was the false-positive bug.               */
-      int is_underflow = 0;
-      for (int h = 0; h < NF_INET_NUMHOOKS; h++) {
-        if ((info->valid_hooks & (1u << h)) && offset == info->underflow[h]) {
-          is_underflow = 1;
+    /* Build ipt_replace */
+    size_t replace_sz = sizeof(struct ipt_replace) + new_sz;
+    struct ipt_replace *repl = calloc(1, replace_sz);
+    if (!repl) {
+      free(new_blob);
+      free(old_offsets);
+      free(removed_before);
+      err = ENOMEM;
+      break;
+    }
+
+    safe_strncpy(repl->name, table_name, sizeof(repl->name));
+    repl->valid_hooks = cur_info.valid_hooks;
+    repl->num_entries = cur_info.num_entries - removed_count;
+    repl->size = new_sz;
+
+    /* num_counters: must be the OLD count */
+    repl->num_counters = cur_info.num_entries;
+    repl->counters = calloc(cur_info.num_entries ? cur_info.num_entries : 1,
+                            sizeof(struct xt_counters));
+
+    if (!repl->counters) {
+      free(repl);
+      free(new_blob);
+      free(old_offsets);
+      free(removed_before);
+      err = ENOMEM;
+      break;
+    }
+
+    /* Pass 2: fix up hook_entry / underflow offsets */
+    for (int h = 0; h < NF_INET_NUMHOOKS; h++) {
+      if (!(cur_info.valid_hooks & (1u << h)))
+        continue;
+
+      unsigned int adj = 0;
+      for (unsigned int k = 0; k <= ei; k++) {
+        if (old_offsets[k] >= cur_info.hook_entry[h]) {
+          adj = removed_before[k];
           break;
         }
       }
-      if (is_underflow) {
-        ds_warn("[IPT] remove: would remove underflow entry at offset %u - "
-                "skipping",
-                offset);
-        /* Treat as non-matching - copy it through instead of removing */
-        memcpy(new_blob + new_sz, e, e->next_offset);
-        new_sz += e->next_offset;
-        offset += e->next_offset;
-        ei++;
-        continue;
+      repl->hook_entry[h] = cur_info.hook_entry[h] - adj;
+
+      adj = 0;
+      for (unsigned int k = 0; k <= ei; k++) {
+        if (old_offsets[k] >= cur_info.underflow[h]) {
+          adj = removed_before[k];
+          break;
+        }
       }
-      ds_log("[IPT] remove: dropping '%s' rule at offset %u", tname, offset);
-      cumulative_gone += e->next_offset;
-      removed_count++;
-    } else {
-      memcpy(new_blob + new_sz, e, e->next_offset);
-      new_sz += e->next_offset;
+      repl->underflow[h] = cur_info.underflow[h] - adj;
     }
 
-    offset += e->next_offset;
-    ei++;
-  }
-  old_offsets[ei] = offset;
-  removed_before[ei] = cumulative_gone;
+    memcpy(repl + 1, new_blob, new_sz);
 
-  if (removed_count == 0) {
-    free(new_blob);
-    free(old_offsets);
-    free(removed_before);
-    return 0; /* nothing to do */
-  }
-
-  /* Build ipt_replace */
-  size_t replace_sz = sizeof(struct ipt_replace) + new_sz;
-  struct ipt_replace *repl = calloc(1, replace_sz);
-  if (!repl) {
-    free(new_blob);
-    free(old_offsets);
-    free(removed_before);
-    return -ENOMEM;
-  }
-
-  safe_strncpy(repl->name, table_name, sizeof(repl->name));
-  repl->valid_hooks = info->valid_hooks;
-  repl->num_entries = info->num_entries - removed_count;
-  repl->size = new_sz;
-  repl->num_counters = repl->num_entries;
-  repl->counters = calloc(repl->num_entries, sizeof(struct xt_counters));
-  if (!repl->counters && repl->num_entries > 0) {
-    free(repl);
-    free(new_blob);
-    free(old_offsets);
-    free(removed_before);
-    return -ENOMEM;
-  }
-
-  /* Pass 2: fix up hook_entry / underflow offsets */
-  for (int h = 0; h < NF_INET_NUMHOOKS; h++) {
-    if (!(info->valid_hooks & (1u << h)))
-      continue;
-
-    /* Find cumulative bytes removed before hook_entry[h] */
-    unsigned int adj = 0;
-    for (unsigned int k = 0; k <= ei; k++) {
-      if (old_offsets[k] >= info->hook_entry[h]) {
-        adj = removed_before[k];
-        break;
-      }
-    }
-    repl->hook_entry[h] = info->hook_entry[h] - adj;
-
-    adj = 0;
-    for (unsigned int k = 0; k <= ei; k++) {
-      if (old_offsets[k] >= info->underflow[h]) {
-        adj = removed_before[k];
-        break;
-      }
-    }
-    repl->underflow[h] = info->underflow[h] - adj;
-  }
-
-  memcpy(repl + 1, new_blob, new_sz);
-
-  int attempts = 3;
-  int ret = 0;
-  int err = 0;
-
-  while (attempts-- > 0) {
     ret = setsockopt(fd, IPPROTO_IP, IPT_SO_SET_REPLACE, repl,
                      (socklen_t)replace_sz);
     err = errno;
 
+    free(repl->counters);
+    free(repl);
+    free(new_blob);
+    free(old_offsets);
+    free(removed_before);
+
     if (ret == 0)
       break;
 
-    if (err == EAGAIN && attempts > 0) {
-      usleep(20000 * (3 - attempts));
+    if (err == EAGAIN && max_retries > 0) {
+      ds_log("[IPT] remove: EAGAIN (attempt remaining=%d) — refetching '%s'",
+             max_retries, table_name);
+      usleep(5000 + 10000 * (4 - max_retries));
+
+      if (cur_base) {
+        free(cur_base);
+        cur_base = NULL;
+      }
+
+      struct ipt_getinfo new_info;
+      unsigned char *new_base = NULL;
+      if (get_table(fd, table_name, &new_info, &new_base) < 0) {
+        ds_log("[IPT] remove: refetch of '%s' failed — giving up", table_name);
+        ret = -1;
+        err = EAGAIN;
+        break;
+      }
+
+      cur_base = new_base;
+      cur_blob = ENTRIES_BLOB(new_base);
+      cur_info = new_info;
       continue;
     }
 
     break;
   }
 
-  free(repl->counters);
-  free(repl);
-  free(new_blob);
-  free(old_offsets);
-  free(removed_before);
+  if (cur_base)
+    free(cur_base);
 
   return (ret < 0) ? -err : 0;
 }

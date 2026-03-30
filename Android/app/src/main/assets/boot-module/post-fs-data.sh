@@ -34,10 +34,12 @@ fi
 "${DMESG_BIN}" -w >> "${LOGS_DIR}/dmesg.log" 2>/dev/null &
 echo $! > "${DMESG_PID_FILE}"
 
+exec >> "${LOGS_FILE}" 2>&1
+
 # Function to log with timestamp
 log() {
     local timestamp=$(date '+%Y-%m-%d %H:%M:%S' 2>/dev/null || echo "$(date +%s)")
-    echo "[${timestamp}] [post-fs-data] $*" >> "${LOGS_FILE}"
+    echo "[${timestamp}] [post-fs-data] $*"
 }
 
 log "Droidspaces post-fs-data script started"
@@ -80,7 +82,7 @@ fi
 if [ -f "${DAEMON_MODE_FILE}" ] && [ "$(${BUSYBOX_BINARY} cat "${DAEMON_MODE_FILE}" 2>/dev/null)" = "1" ]; then
     log "Daemon mode enabled, starting Droidspaces daemon..."
 
-    if "${DROIDSPACE_BINARY}" daemon >> "${LOGS_FILE}" 2>&1; then
+    if "${DROIDSPACE_BINARY}" daemon 2>&1; then
         log "Daemon process launched successfully"
     else
         log "WARNING: Failed to launch daemon"

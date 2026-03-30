@@ -18,7 +18,8 @@ mkdir -p "${LOGS_DIR}" 2>/dev/null
 exec >> "${LOGS_FILE}" 2>&1
 
 log() {
-    echo "[$(date '+%Y-%m-%d %H:%M:%S' 2>/dev/null || date +%s)] [autoboot] $*"
+    local timestamp=$(date '+%Y-%m-%d %H:%M:%S' 2>/dev/null || echo "$(date +%s)")
+    echo "[${timestamp}] [autoboot] $*"
 }
 
 strip_colors() {

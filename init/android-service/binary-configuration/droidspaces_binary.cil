@@ -35,6 +35,9 @@
 (allow kernel system_data_file (file (read write open getattr)))
 (allow kernel vold_data_file (file (read write open getattr)))
 
+; Allow kernel to create character devices in /dev
+(allow kernel device (chr_file (create setattr)))
+
 ; Allow servicemanager to inspect and call into droidspacesd over binder.
 ; Fixes: dumpsys failures in DNS resolution
 (allow servicemanager droidspacesd (binder (call transfer)))
